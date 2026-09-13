@@ -84,6 +84,40 @@ class TestMainCLI(unittest.TestCase):
         self.assertTrue(os.path.exists(expected_file))
         self.assertTrue(os.path.islink(expected_file))
 
+    def test_main_cli_data_dir(self):
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with tempfile.TemporaryDirectory() as single_mount_dir:
+            calibre_subdir = os.path.join(single_mount_dir, "calibre")
+            vfs_subdir = os.path.join(single_mount_dir, "vfs")
+            os.makedirs(calibre_subdir, exist_ok=True)
+            os.makedirs(vfs_subdir, exist_ok=True)
+
+            # Copy DB and test files
+            import shutil
+            shutil.copy2(self.db_path, os.path.join(calibre_subdir, "metadata.db"))
+            shutil.copytree(
+                os.path.join(self.calibre_dir, "Oda"),
+                os.path.join(calibre_subdir, "Oda"),
+            )
+
+            cmd = [
+                sys.executable,
+                "main.py",
+                "--data-dir", single_mount_dir,
+                "--mode", "hardlink",
+                "--once",
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, cwd=repo_root)
+            self.assertEqual(result.returncode, 0, f"Process failed: {result.stderr}")
+
+            expected_file = os.path.join(
+                vfs_subdir,
+                "eng/Manga/One Piece/One Piece Vol. 10 Ch. 100.cbz"
+            )
+            self.assertTrue(os.path.exists(expected_file))
+            # Verify it is a real file (hardlink, not symlink)
+            self.assertFalse(os.path.islink(expected_file))
+
 
 if __name__ == "__main__":
     unittest.main()

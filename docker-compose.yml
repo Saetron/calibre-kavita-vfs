@@ -18,10 +18,12 @@ services:
       - DEFAULT_TYPE=Manga         # Fallback if book has no custom '#type' set
       - LOG_LEVEL=INFO
     volumes:
-      # Calibre library folder (where metadata.db and book files live) - read-only
+      # Option A (Standard Symlinks): Separate mounts
       - /path/to/calibre/library:/calibre:ro
-      # Target directory where the Kavita structure will be generated
       - /path/to/kavita/vfs_library:/vfs
+      # Option B (Hardlinks): Mount a single shared parent directory
+      # - /path/to/shared/data:/data
+      # (and set DATA_DIR=/data, VFS_MODE=hardlink in environment)
     # If running with VFS_MODE=fuse:
     # cap_add:
     #   - SYS_ADMIN

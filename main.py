@@ -32,15 +32,22 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Create a Kavita-formatted VFS from a Calibre library."
     )
+    data_dir_env = os.environ.get("DATA_DIR", "").strip()
+
+    parser.add_argument(
+        "--data-dir",
+        default=data_dir_env,
+        help="Base directory containing 'calibre' and 'vfs' subdirectories for single-mount setups (env: DATA_DIR)",
+    )
     parser.add_argument(
         "--calibre-dir",
-        default=os.environ.get("CALIBRE_DIR", "/calibre"),
-        help="Path to Calibre library containing metadata.db (env: CALIBRE_DIR, default: /calibre)",
+        default=None,
+        help="Path to Calibre library containing metadata.db (env: CALIBRE_DIR, default: /calibre or <DATA_DIR>/calibre)",
     )
     parser.add_argument(
         "--vfs-dir",
-        default=os.environ.get("VFS_DIR", os.environ.get("OUTPUT_DIR", "/vfs")),
-        help="Target path for Kavita VFS (env: VFS_DIR, default: /vfs)",
+        default=None,
+        help="Target path for Kavita VFS (env: VFS_DIR, default: /vfs or <DATA_DIR>/vfs)",
     )
     parser.add_argument(
         "--mode",
@@ -87,7 +94,21 @@ def parse_args() -> argparse.Namespace:
         help="Logging level (DEBUG, INFO, WARNING, ERROR) (env: LOG_LEVEL, default: INFO)",
     )
 
-    return parser.parse_args()
+    args = parser.parse_args()
+
+    data_dir = (args.data_dir or "").strip()
+    if not args.calibre_dir:
+        args.calibre_dir = os.environ.get(
+            "CALIBRE_DIR",
+            os.path.join(data_dir, "calibre") if data_dir else "/calibre",
+        )
+    if not args.vfs_dir:
+        args.vfs_dir = os.environ.get(
+            "VFS_DIR",
+            os.environ.get("OUTPUT_DIR", os.path.join(data_dir, "vfs") if data_dir else "/vfs"),
+        )
+
+    return args
 
 
 def main() -> int:

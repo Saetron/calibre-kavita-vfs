@@ -120,6 +120,7 @@ docker compose logs -f calibre-kavita-vfs
 
 | Variable | Default | Description |
 |---|---|---|
+| `DATA_DIR` | *(empty)* | Base single-mount directory. If set (e.g. `/data`), `CALIBRE_DIR` defaults to `/data/calibre` and `VFS_DIR` defaults to `/data/vfs`. Essential for hardlinks! |
 | `CALIBRE_DIR` | `/calibre` | Directory containing Calibre's `metadata.db` and book files |
 | `VFS_DIR` | `/vfs` | Target directory for generated Kavita VFS |
 | `CALIBRE_TARGET_DIR` | *(empty / uses CALIBRE_DIR)* | Custom path prefix written into symlinks (useful for Unraid host paths like `/mnt/user/...` or custom Kavita container paths) |
@@ -137,15 +138,27 @@ docker compose logs -f calibre-kavita-vfs
 
 ## Unraid & Docker Path Mapping Tips
 
-If Kavita cannot see or open your symlinked books, it is almost always because the symlink target path does not resolve **inside the Kavita container**:
+### Using Hardlinks on Unraid (`VFS_MODE=hardlink`)
+In Linux, **hardlinks cannot cross Docker mount points** (Linux returns `EXDEV: Invalid cross-device link`).
+If you map `-v /mnt/user/data/calibre:/calibre` and `-v /mnt/user/data/vfs:/vfs`, Docker creates **two separate mounts**, preventing hardlinks from working even though they are on the same Unraid share!
 
-1. **Why it happens**: By default, symlinks point to `/calibre/...`. Inside the `calibre-kavita-vfs` container, `/calibre` is mapped, but inside the `kavita` container, `/calibre` is usually missing. Without the target files present inside Kavita's container, the symlinks are dead/broken, and Kavita ignores them.
-2. **Fix 1 (Recommended)**: In Unraid, edit your **Kavita** container and add a path mapping:
+**Solution**: Use a single parent mount (e.g. `/data`):
+- **Host Share**: `/mnt/user/data`
+- **In `calibre-kavita-vfs` container**:
+  - Mount: `/mnt/user/data` -> `/data`
+  - Set: `DATA_DIR=/data` (or `CALIBRE_DIR=/data/calibre` and `VFS_DIR=/data/vfs`)
+  - Set: `VFS_MODE=hardlink`
+- **In `kavita` container**:
+  - Mount: `/mnt/user/data/vfs` -> `/data`
+  - Kavita sees real, independent files. It does **not** need Calibre mounted at all, and it consumes **zero extra disk space**!
+
+### Using Symlinks
+If using symlinks, remember that Kavita runs in its own container and must be able to reach the target files:
+1. **Fix 1 (Recommended)**: In Unraid, edit your **Kavita** container and add a path mapping:
    - **Container Path**: `/calibre`
    - **Host Path**: `/mnt/user/.../calibre` (the same Calibre folder)
    - **Access Mode**: Read-Only
-3. **Fix 2 (Hardlinks)**: If Calibre and VFS folders are on the same Unraid share or disk, set `VFS_MODE=hardlink`. Hardlinks do not require `/calibre` to be mapped inside Kavita at all!
-4. **Fix 3 (Host Path Symlinks)**: Set `CALIBRE_TARGET_DIR=/mnt/user/path/to/calibre`. The symlinks will point directly to the host path.
+2. **Fix 2 (Host Path Symlinks)**: Set `CALIBRE_TARGET_DIR=/mnt/user/path/to/calibre`. The symlinks will point directly to the host path.
 
 ---
 
