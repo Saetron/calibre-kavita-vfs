@@ -115,6 +115,36 @@ class TestSync(unittest.TestCase):
         # Verify it resolves to source1
         self.assertEqual(os.path.realpath(target), os.path.realpath(self.source1))
 
+    def test_target_calibre_dir(self):
+        vfs = SymlinkVFS(
+            vfs_dir=self.temp_vfs.name,
+            link_type="symlink",
+            calibre_dir=self.temp_calibre.name,
+            target_calibre_dir="/mnt/user/data/calibre",
+            default_language="eng",
+            default_type="Manga",
+        )
+
+        record = BookFileRecord(
+            book_id=1,
+            title="Naruto 1",
+            series="Naruto",
+            language="eng",
+            type_="Manga",
+            volume=1,
+            chapter=1,
+            format="CBZ",
+            source_path=self.source1,
+        )
+
+        vfs.sync([record])
+        target = os.path.join(self.temp_vfs.name, "eng/Manga/Naruto/Naruto Vol. 1 Ch. 1.cbz")
+        self.assertTrue(os.path.islink(target))
+        link_dest = os.readlink(target)
+        # Verify it has been translated to the target_calibre_dir prefix
+        self.assertTrue(link_dest.startswith("/mnt/user/data/calibre/"))
+        self.assertTrue(link_dest.endswith("book1.cbz"))
+
 
 if __name__ == "__main__":
     unittest.main()

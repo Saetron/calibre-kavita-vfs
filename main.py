@@ -77,6 +77,11 @@ def parse_args() -> argparse.Namespace:
         help="Fallback type when custom column 'type' is not set (env: DEFAULT_TYPE, default: Unknown)",
     )
     parser.add_argument(
+        "--target-calibre-dir",
+        default=os.environ.get("CALIBRE_TARGET_DIR", os.environ.get("SYMLINK_TARGET_PREFIX", "")),
+        help="Custom target directory prefix for symlinks (e.g. host path /mnt/user/... or Kavita path) (env: CALIBRE_TARGET_DIR)",
+    )
+    parser.add_argument(
         "--log-level",
         default=os.environ.get("LOG_LEVEL", "INFO").upper(),
         help="Logging level (DEBUG, INFO, WARNING, ERROR) (env: LOG_LEVEL, default: INFO)",
@@ -129,6 +134,8 @@ def main() -> int:
         relative_links=args.relative_links,
         default_language=args.default_language,
         default_type=args.default_type,
+        calibre_dir=args.calibre_dir,
+        target_calibre_dir=args.target_calibre_dir,
     )
 
     stop_requested = False

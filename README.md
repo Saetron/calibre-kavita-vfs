@@ -122,6 +122,7 @@ docker compose logs -f calibre-kavita-vfs
 |---|---|---|
 | `CALIBRE_DIR` | `/calibre` | Directory containing Calibre's `metadata.db` and book files |
 | `VFS_DIR` | `/vfs` | Target directory for generated Kavita VFS |
+| `CALIBRE_TARGET_DIR` | *(empty / uses CALIBRE_DIR)* | Custom path prefix written into symlinks (useful for Unraid host paths like `/mnt/user/...` or custom Kavita container paths) |
 | `VFS_MODE` | `symlink` | `symlink`, `hardlink`, or `fuse` |
 | `SYNC_INTERVAL` | `60` | Check interval in seconds for Calibre DB updates |
 | `SYNC_ONCE` | `false` | If `true`, runs one sync pass and exits (for cron jobs) |
@@ -131,6 +132,20 @@ docker compose logs -f calibre-kavita-vfs
 | `PUID` | `1000` | User ID for file ownership |
 | `PGID` | `1000` | Group ID for file ownership |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+
+---
+
+## Unraid & Docker Path Mapping Tips
+
+If Kavita cannot see or open your symlinked books, it is almost always because the symlink target path does not resolve **inside the Kavita container**:
+
+1. **Why it happens**: By default, symlinks point to `/calibre/...`. Inside the `calibre-kavita-vfs` container, `/calibre` is mapped, but inside the `kavita` container, `/calibre` is usually missing. Without the target files present inside Kavita's container, the symlinks are dead/broken, and Kavita ignores them.
+2. **Fix 1 (Recommended)**: In Unraid, edit your **Kavita** container and add a path mapping:
+   - **Container Path**: `/calibre`
+   - **Host Path**: `/mnt/user/.../calibre` (the same Calibre folder)
+   - **Access Mode**: Read-Only
+3. **Fix 2 (Hardlinks)**: If Calibre and VFS folders are on the same Unraid share or disk, set `VFS_MODE=hardlink`. Hardlinks do not require `/calibre` to be mapped inside Kavita at all!
+4. **Fix 3 (Host Path Symlinks)**: Set `CALIBRE_TARGET_DIR=/mnt/user/path/to/calibre`. The symlinks will point directly to the host path.
 
 ---
 

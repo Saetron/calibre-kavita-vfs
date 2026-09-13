@@ -24,12 +24,16 @@ class SymlinkVFS:
         relative_links: bool = False,
         default_language: str = "unknown",
         default_type: str = "Unknown",
+        calibre_dir: str = "/calibre",
+        target_calibre_dir: Optional[str] = None,
     ):
         self.vfs_dir = os.path.abspath(vfs_dir)
         self.link_type = link_type.lower()
         self.relative_links = relative_links
         self.default_language = default_language
         self.default_type = default_type
+        self.calibre_dir = os.path.abspath(calibre_dir)
+        self.target_calibre_dir = target_calibre_dir.strip() if target_calibre_dir else None
 
         if self.link_type not in ("symlink", "hardlink"):
             raise ValueError(f"Unsupported link_type: {link_type}. Must be 'symlink' or 'hardlink'")
@@ -108,8 +112,12 @@ class SymlinkVFS:
             os.makedirs(parent_dir, exist_ok=True)
 
             target_source = source_path
-            if self.link_type == "symlink" and self.relative_links:
-                target_source = os.path.relpath(source_path, parent_dir)
+            if self.link_type == "symlink":
+                if self.target_calibre_dir:
+                    rel_to_calibre = os.path.relpath(source_path, self.calibre_dir)
+                    target_source = os.path.join(self.target_calibre_dir, rel_to_calibre)
+                elif self.relative_links:
+                    target_source = os.path.relpath(source_path, parent_dir)
 
             needs_create = True
             if os.path.islink(target_path):
@@ -146,7 +154,15 @@ class SymlinkVFS:
                     created_count += 1
                     logger.debug("Linked: %s -> %s", target_path, target_source)
                 except OSError as e:
-                    logger.error("Failed to create %s %s -> %s: %s", self.link_type, target_path, target_source, e)
+                    import errno
+                    if self.link_type == "hardlink" and e.errno == errno.EXDEV:
+                        logger.error(
+                            "Cannot create hardlink across different filesystems/mounts (%s -> %s). "
+                            "Ensure both /calibre and /vfs are on the same filesystem/disk, or use VFS_MODE=symlink.",
+                            source_path, target_path
+                        )
+                    else:
+                        logger.error("Failed to create %s %s -> %s: %s", self.link_type, target_path, target_source, e)
 
         # Clean up empty directories
         self._prune_empty_dirs(self.vfs_dir)
