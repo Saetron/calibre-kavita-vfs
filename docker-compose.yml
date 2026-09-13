@@ -1,0 +1,53 @@
+version: "3.8"
+
+services:
+  # Calibre to Kavita VFS Sync Service
+  calibre-kavita-vfs:
+    build: .
+    image: calibre-kavita-vfs:latest
+    container_name: calibre-kavita-vfs
+    restart: unless-stopped
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=UTC
+      - VFS_MODE=symlink           # 'symlink', 'hardlink', or 'fuse'
+      - SYNC_INTERVAL=60           # In seconds; periodically checks metadata.db for changes
+      - RELATIVE_LINKS=false       # Set to true if using relative symlinks
+      - DEFAULT_LANGUAGE=eng       # Fallback if book has no language set
+      - DEFAULT_TYPE=Manga         # Fallback if book has no custom '#type' set
+      - LOG_LEVEL=INFO
+    volumes:
+      # Calibre library folder (where metadata.db and book files live) - read-only
+      - /path/to/calibre/library:/calibre:ro
+      # Target directory where the Kavita structure will be generated
+      - /path/to/kavita/vfs_library:/vfs
+    # If running with VFS_MODE=fuse:
+    # cap_add:
+    #   - SYS_ADMIN
+    # devices:
+    #   - /dev/fuse:/dev/fuse
+    # security_opt:
+    #   - apparmor:unconfined
+
+  # Kavita Media Server
+  kavita:
+    image: jvmilazz0/kavita:latest
+    container_name: kavita
+    restart: unless-stopped
+    depends_on:
+      - calibre-kavita-vfs
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=UTC
+    ports:
+      - "5000:5000"
+    volumes:
+      - /path/to/kavita/config:/kavita/config
+      # Mount the VFS generated folder as Kavita library
+      - /path/to/kavita/vfs_library:/data:ro
+      # IMPORTANT NOTE FOR SYMLINK MODE:
+      # If using absolute symlinks (the default), Kavita must also have access to the
+      # original /calibre folder at the exact same path so symlink targets resolve.
+      - /path/to/calibre/library:/calibre:ro
