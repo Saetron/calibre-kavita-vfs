@@ -192,6 +192,64 @@ class TestSync(unittest.TestCase):
         self.assertFalse(os.path.islink(target))
         self.assertEqual(os.stat(target).st_ino, os.stat(self.source1).st_ino)
 
+    def test_delta_sync_with_database(self):
+        from vfs_database import VFSDatabase
+        db_file = os.path.join(self.temp_vfs.name, ".vfs_cache.db")
+        db = VFSDatabase(db_file)
+
+        vfs = SymlinkVFS(
+            vfs_dir=self.temp_vfs.name,
+            link_type="symlink",
+            default_language="eng",
+            default_type="Manga",
+            db=db,
+        )
+
+        record1 = BookFileRecord(
+            book_id=1,
+            title="Naruto 1",
+            series="Naruto",
+            language="eng",
+            type_="Manga",
+            volume=1,
+            chapter=1,
+            format="CBZ",
+            source_path=self.source1,
+        )
+
+        # 1. Initial sync: creates 1 link
+        c, u, d = vfs.sync([record1])
+        self.assertEqual((c, u, d), (1, 0, 0))
+        self.assertEqual(len(db.get_tracked_map()), 1)
+
+        # 2. Repeated sync with no changes: delta sync should skip (0, 0, 0)
+        c2, u2, d2 = vfs.sync([record1])
+        self.assertEqual((c2, u2, d2), (0, 0, 0))
+
+        # 3. Add record2: delta sync creates 1, updates 0, deletes 0
+        record2 = BookFileRecord(
+            book_id=2,
+            title="Naruto 2",
+            series="Naruto",
+            language="eng",
+            type_="Manga",
+            volume=2,
+            chapter=2,
+            format="CBZ",
+            source_path=self.source2,
+        )
+        c3, u3, d3 = vfs.sync([record1, record2])
+        self.assertEqual((c3, u3, d3), (1, 0, 0))
+        self.assertEqual(len(db.get_tracked_map()), 2)
+
+        # 4. Remove record1: delta sync deletes 1
+        c4, u4, d4 = vfs.sync([record2])
+        self.assertEqual((c4, u4, d4), (0, 0, 1))
+        self.assertEqual(len(db.get_tracked_map()), 1)
+
+        db.close()
+
 
 if __name__ == "__main__":
     unittest.main()
+

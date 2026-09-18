@@ -204,6 +204,52 @@ HTML_DASHBOARD = """<!DOCTYPE html>
     .mono { font-family: var(--font-mono); font-size: 0.8rem; }
     .path-cell { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); }
     .empty-state { padding: 48px; text-align: center; color: var(--text-muted); }
+
+    /* Pagination */
+    .pagination-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 16px;
+      background: rgba(15, 23, 42, 0.4);
+      border-top: 1px solid var(--card-border);
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .pagination-controls {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .btn-page {
+      background: var(--bg-card);
+      border: 1px solid var(--card-border);
+      color: var(--text);
+      padding: 6px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.8rem;
+      font-weight: 500;
+      transition: all 0.15s ease;
+    }
+    .btn-page:hover:not(:disabled) {
+      background: var(--primary);
+      color: #0f172a;
+      border-color: var(--primary);
+    }
+    .btn-page:disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+    }
+    .page-select {
+      background: var(--bg-card);
+      border: 1px solid var(--card-border);
+      color: var(--text);
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 0.8rem;
+      outline: none;
+    }
   </style>
 </head>
 <body>
@@ -284,9 +330,12 @@ HTML_DASHBOARD = """<!DOCTYPE html>
     <!-- Books Table -->
     <div class="table-section">
       <div class="table-header">
-        <h2>Mapped Books in VFS (<span id="table-count">0</span>)</h2>
+        <h2>
+          Mapped Books in VFS
+          <span id="table-count" class="card-sub" style="margin-left: 8px;">Loading...</span>
+        </h2>
         <div class="search-box">
-          <input type="text" id="search-input" placeholder="Search series, title, ID, path..." oninput="filterBooks()">
+          <input type="text" id="search-input" placeholder="Search series, title, ID, path..." oninput="onSearchInput()">
         </div>
       </div>
       <div class="table-wrapper">
@@ -308,115 +357,97 @@ HTML_DASHBOARD = """<!DOCTYPE html>
           </tbody>
         </table>
       </div>
+      <div class="pagination-bar">
+        <div style="font-size: 0.85rem; color: var(--text-muted); display: flex; align-items: center; gap: 8px;">
+          <span>Items per page:</span>
+          <select id="page-size-select" class="page-select" onchange="changePageSize()">
+            <option value="50" selected>50</option>
+            <option value="100">100</option>
+            <option value="250">250</option>
+            <option value="500">500</option>
+          </select>
+        </div>
+        <div class="pagination-controls">
+          <button id="btn-first" class="btn-page" onclick="goToPage(1)">« First</button>
+          <button id="btn-prev" class="btn-page" onclick="goToPage(currentPage - 1)">‹ Prev</button>
+          <span style="font-size: 0.85rem; padding: 0 8px;">
+            Page <strong id="current-page-num">1</strong> of <strong id="total-pages-num">1</strong>
+          </span>
+          <button id="btn-next" class="btn-page" onclick="goToPage(currentPage + 1)">Next ›</button>
+          <button id="btn-last" class="btn-page" onclick="goToPage(totalPages)">Last »</button>
+        </div>
+      </div>
     </div>
   </div>
 
   <script>
-    let allBooks = [];
+    let currentPage = 1;
+    let pageSize = 50;
+    let totalPages = 1;
+    let totalItems = 0;
+    let searchQuery = '';
+    let searchDebounceTimer = null;
 
-    async function fetchStatus() {
-      try {
-        const res = await fetch('/api/status');
-        const data = await res.json();
+    function onSearchInput() {
+      clearTimeout(searchDebounceTimer);
+      searchDebounceTimer = setTimeout(() => {
+        searchQuery = document.getElementById('search-input').value.trim();
+        currentPage = 1;
+        fetchBooks();
+      }, 300);
+    }
 
-        // Update badges
-        document.getElementById('mode-badge').innerText = data.mode.toUpperCase();
-        const syncBadge = document.getElementById('sync-status-badge');
-        if (data.sync_in_progress) {
-          syncBadge.className = 'badge badge-warning';
-          syncBadge.innerText = 'Syncing...';
-          document.getElementById('sync-btn').disabled = true;
-        } else if (data.last_error) {
-          syncBadge.className = 'badge badge-danger';
-          syncBadge.innerText = 'Error';
-          document.getElementById('sync-btn').disabled = false;
-        } else {
-          syncBadge.className = 'badge badge-success';
-          syncBadge.innerText = 'Idle';
-          document.getElementById('sync-btn').disabled = false;
-        }
+    function changePageSize() {
+      pageSize = parseInt(document.getElementById('page-size-select').value, 10) || 50;
+      currentPage = 1;
+      fetchBooks();
+    }
 
-        // Stats
-        document.getElementById('stat-books').innerText = data.total_books.toLocaleString();
-        document.getElementById('stat-series').innerText = data.total_series.toLocaleString();
-        document.getElementById('stat-volumes').innerText = data.total_volumes.toLocaleString();
-        document.getElementById('stat-volumes-sub').innerText = `${data.books_with_volume} books with volume`;
-        document.getElementById('stat-chapters').innerText = data.total_chapters.toLocaleString();
-        document.getElementById('stat-chapters-sub').innerText = `${data.books_with_chapter} books with chapter`;
-        document.getElementById('stat-collisions').innerText = data.collision_count;
-
-        const collCard = document.getElementById('stat-collisions');
-        if (data.collision_count > 0) {
-          collCard.style.color = 'var(--danger)';
-        } else {
-          collCard.style.color = 'var(--success)';
-        }
-
-        // Collisions panel
-        const collBox = document.getElementById('collision-box');
-        if (data.collision_count > 0) {
-          collBox.classList.add('active');
-          const tbody = document.getElementById('collision-rows');
-          tbody.innerHTML = data.collisions.map(c => `
-            <tr>
-              <td>${c.relpath}</td>
-              <td>#${c.existing_book_id}</td>
-              <td>#${c.colliding_book_id}</td>
-              <td style="color: var(--success);">${c.resolved_path}</td>
-            </tr>
-          `).join('');
-        } else {
-          collBox.classList.remove('active');
-        }
-
-        // Distributions
-        const typeChips = document.getElementById('type-chips');
-        typeChips.innerHTML = Object.entries(data.type_counts || {}).map(([k, v]) => `
-          <div class="chip">${k}: <strong>${v}</strong></div>
-        `).join('') || '<span class="card-sub">None</span>';
-
-        const langChips = document.getElementById('lang-chips');
-        langChips.innerHTML = Object.entries(data.language_counts || {}).map(([k, v]) => `
-          <div class="chip">${k}: <strong>${v}</strong></div>
-        `).join('') || '<span class="card-sub">None</span>';
-
-      } catch (err) {
-        console.error('Failed to fetch status:', err);
-      }
+    function goToPage(page) {
+      if (page < 1 || page > totalPages) return;
+      currentPage = page;
+      fetchBooks();
     }
 
     async function fetchBooks() {
+      const offset = (currentPage - 1) * pageSize;
       try {
-        const res = await fetch('/api/books?limit=1000');
+        const res = await fetch(`/api/books?q=${encodeURIComponent(searchQuery)}&limit=${pageSize}&offset=${offset}`);
         const data = await res.json();
-        allBooks = data.items || [];
-        filterBooks();
+        totalItems = data.total || 0;
+        totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+        if (currentPage > totalPages) {
+          currentPage = totalPages;
+        }
+
+        const start = totalItems === 0 ? 0 : offset + 1;
+        const end = Math.min(offset + pageSize, totalItems);
+        document.getElementById('table-count').innerText =
+          `(showing ${start}–${end} of ${totalItems.toLocaleString()} books)`;
+
+        document.getElementById('current-page-num').innerText = currentPage;
+        document.getElementById('total-pages-num').innerText = totalPages;
+
+        document.getElementById('btn-first').disabled = (currentPage <= 1);
+        document.getElementById('btn-prev').disabled = (currentPage <= 1);
+        document.getElementById('btn-next').disabled = (currentPage >= totalPages);
+        document.getElementById('btn-last').disabled = (currentPage >= totalPages);
+
+        renderRows(data.items || []);
       } catch (err) {
         console.error('Failed to fetch books:', err);
       }
     }
 
-    function filterBooks() {
-      const q = (document.getElementById('search-input').value || '').toLowerCase().trim();
-      const filtered = allBooks.filter(b => {
-        if (!q) return true;
-        return (b.title && b.title.toLowerCase().includes(q)) ||
-               (b.series && b.series.toLowerCase().includes(q)) ||
-               String(b.book_id).includes(q) ||
-               (b.vfs_path && b.vfs_path.toLowerCase().includes(q)) ||
-               (b.type && b.type.toLowerCase().includes(q));
-      });
-
-      document.getElementById('table-count').innerText = filtered.length.toLocaleString();
+    function renderRows(items) {
       const tbody = document.getElementById('books-rows');
-
-      if (filtered.length === 0) {
+      if (!items || items.length === 0) {
         tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No matching books found.</td></tr>';
         return;
       }
 
-      tbody.innerHTML = filtered.map(b => {
-        const filename = b.vfs_path ? b.vfs_path.split('/').pop() : '-';
+      tbody.innerHTML = items.map(b => {
+        const filename = b.vfs_path ? b.vfs_path.split('/').pop() : (b.vfs_relpath ? b.vfs_relpath.split('/').pop() : '-');
         return `
           <tr>
             <td class="mono"><strong>#${b.book_id}</strong></td>
@@ -425,7 +456,7 @@ HTML_DASHBOARD = """<!DOCTYPE html>
             <td>${b.chapter || '-'}</td>
             <td><span class="chip" style="font-size:0.75rem;">${b.type || '-'}</span></td>
             <td><span class="chip" style="font-size:0.75rem;">${b.language || '-'}</span></td>
-            <td class="mono path-cell" title="${b.vfs_path}">${filename}</td>
+            <td class="mono path-cell" title="${b.vfs_path || b.vfs_relpath}">${filename}</td>
             <td class="mono path-cell" title="${b.source_path}">${b.source_path}</td>
           </tr>
         `;
@@ -512,7 +543,7 @@ class WebUIHandler(BaseHTTPRequestHandler):
         elif path == "/api/books":
             params = urllib.parse.parse_qs(parsed.query)
             q = params.get("q", [""])[0]
-            limit = int(params.get("limit", [1000])[0])
+            limit = int(params.get("limit", [50])[0])
             offset = int(params.get("offset", [0])[0])
 
             self.send_response(HTTPStatus.OK)

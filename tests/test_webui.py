@@ -58,11 +58,13 @@ class TestWebUI(unittest.TestCase):
         self.assertIn("collision_count", data)
 
     def test_get_api_books(self):
-        status, headers, body = execute_request("GET", "/api/books?q=test&limit=10")
+        status, headers, body = execute_request("GET", "/api/books?q=test&limit=10&offset=5")
         self.assertEqual(status, 200)
         data = json.loads(body.decode("utf-8"))
         self.assertIn("total", data)
         self.assertIn("items", data)
+        self.assertEqual(data["limit"], 10)
+        self.assertEqual(data["offset"], 5)
 
     def test_post_api_sync(self):
         sync_called = False

@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Dict, List, Set, Tuple
+import time
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from calibre_db import BookFileRecord
 from formatter import build_vfs_relpath
@@ -26,6 +27,7 @@ class SymlinkVFS:
         default_type: str = "Unknown",
         calibre_dir: str = "/calibre",
         target_calibre_dir: Optional[str] = None,
+        db: Optional[Any] = None,
     ):
         self.vfs_dir = os.path.abspath(vfs_dir)
         self.link_type = link_type.lower()
@@ -34,8 +36,10 @@ class SymlinkVFS:
         self.default_type = default_type
         self.calibre_dir = os.path.abspath(calibre_dir)
         self.target_calibre_dir = target_calibre_dir.strip() if target_calibre_dir else None
+        self.db = db
 
         self.last_collisions: List[Dict[str, Any]] = []
+        self.last_records_map: Dict[str, Tuple[BookFileRecord, str]] = {}
 
         if self.link_type not in ("symlink", "hardlink"):
             raise ValueError(f"Unsupported link_type: {link_type}. Must be 'symlink' or 'hardlink'")
@@ -48,6 +52,7 @@ class SymlinkVFS:
         Handles collisions by suffixing duplicate index if multiple files map to the same path.
         """
         self.last_collisions = []
+        self.last_records_map = {}
         desired: Dict[str, str] = {}
         # Keep track of paths to detect and resolve collisions
         used_relpaths: Dict[str, Dict[str, Any]] = {}
@@ -93,8 +98,87 @@ class SymlinkVFS:
             used_relpaths[relpath] = {"book_id": rec.book_id, "source_path": rec.source_path}
             target_path = os.path.join(self.vfs_dir, relpath)
             desired[target_path] = rec.source_path
+            self.last_records_map[target_path] = (rec, relpath)
 
         return desired
+
+    def _compute_target_source(self, target_path: str, source_path: str) -> str:
+        """Compute the link target path based on mode and settings."""
+        if self.link_type == "symlink":
+            if self.target_calibre_dir:
+                rel_to_calibre = os.path.relpath(source_path, self.calibre_dir)
+                return os.path.join(self.target_calibre_dir, rel_to_calibre)
+            elif self.relative_links:
+                parent_dir = os.path.dirname(target_path)
+                return os.path.relpath(source_path, parent_dir)
+            else:
+                return source_path
+        else:
+            return source_path
+
+    def _ensure_link(self, target_path: str, source_path: str, target_source: str) -> Tuple[bool, bool]:
+        """Create or update link. Returns (created: bool, updated: bool)."""
+        parent_dir = os.path.dirname(target_path)
+        os.makedirs(parent_dir, exist_ok=True)
+
+        needs_create = True
+        updated = False
+        created = False
+
+        if self.link_type == "symlink":
+            if os.path.islink(target_path):
+                try:
+                    if os.readlink(target_path) == target_source:
+                        needs_create = False
+                    else:
+                        os.unlink(target_path)
+                        updated = True
+                except OSError as e:
+                    logger.warning("Failed to remove link for update %s: %s", target_path, e)
+            elif os.path.exists(target_path):
+                try:
+                    os.unlink(target_path)
+                    updated = True
+                except OSError as e:
+                    logger.warning("Failed to remove non-symlink file for symlink update %s: %s", target_path, e)
+        else:
+            # hardlink
+            if os.path.islink(target_path):
+                try:
+                    os.unlink(target_path)
+                    updated = True
+                except OSError as e:
+                    logger.warning("Failed to remove symlink for hardlink update %s: %s", target_path, e)
+            elif os.path.exists(target_path):
+                try:
+                    if os.stat(target_path).st_ino == os.stat(source_path).st_ino:
+                        needs_create = False
+                    else:
+                        os.unlink(target_path)
+                        updated = True
+                except OSError:
+                    pass
+
+        if needs_create:
+            try:
+                if self.link_type == "symlink":
+                    os.symlink(target_source, target_path)
+                else:
+                    os.link(source_path, target_path)
+                created = True
+                logger.debug("Linked: %s -> %s", target_path, target_source)
+            except OSError as e:
+                import errno
+                if self.link_type == "hardlink" and e.errno == errno.EXDEV:
+                    logger.error(
+                        "Cannot create hardlink across different filesystems/mounts (%s -> %s). "
+                        "Ensure both /calibre and /vfs are on the same filesystem/disk, or use VFS_MODE=symlink.",
+                        source_path, target_path,
+                    )
+                else:
+                    logger.error("Failed to create %s %s -> %s: %s", self.link_type, target_path, target_source, e)
+
+        return created, updated
 
     def sync(self, records: List[BookFileRecord]) -> Tuple[int, int, int]:
         """Synchronize the VFS directory with current Calibre records.
@@ -103,105 +187,115 @@ class SymlinkVFS:
         """
         os.makedirs(self.vfs_dir, exist_ok=True)
         desired_map = self.build_desired_tree(records)
-
-        existing_links: Dict[str, str] = {}
-        for root, dirs, files in os.walk(self.vfs_dir):
-            for file in files:
-                target_path = os.path.join(root, file)
-                if os.path.islink(target_path):
-                    existing_links[target_path] = os.readlink(target_path)
-                elif os.path.isfile(target_path):
-                    existing_links[target_path] = "file"
-
         created_count = 0
         updated_count = 0
         deleted_count = 0
+        now = time.time()
 
-        # Remove stale links or files that are no longer in desired_map
-        for existing_path in existing_links:
-            if existing_path not in desired_map:
-                try:
-                    os.unlink(existing_path)
-                    deleted_count += 1
-                    logger.debug("Removed stale link: %s", existing_path)
-                except OSError as e:
-                    logger.warning("Failed to remove stale link %s: %s", existing_path, e)
+        if self.db is not None:
+            tracked = self.db.get_tracked_map()
 
-        # Create or update links
-        for target_path, source_path in desired_map.items():
-            parent_dir = os.path.dirname(target_path)
-            os.makedirs(parent_dir, exist_ok=True)
-
-            target_source = source_path
-            if self.link_type == "symlink":
-                if self.target_calibre_dir:
-                    rel_to_calibre = os.path.relpath(source_path, self.calibre_dir)
-                    target_source = os.path.join(self.target_calibre_dir, rel_to_calibre)
-                elif self.relative_links:
-                    target_source = os.path.relpath(source_path, parent_dir)
-
-            needs_create = True
-            if self.link_type == "symlink":
-                if os.path.islink(target_path):
-                    current_link = os.readlink(target_path)
-                    if current_link == target_source:
-                        needs_create = False
-                    else:
-                        try:
-                            os.unlink(target_path)
-                            updated_count += 1
-                        except OSError as e:
-                            logger.warning("Failed to remove link for update %s: %s", target_path, e)
-                elif os.path.exists(target_path):
-                    # File exists but is not a symlink (e.g. was a hardlink); remove to recreate as symlink
+            # 1. Delta deletions
+            stale_paths = [p for p in tracked if p not in desired_map]
+            for p in stale_paths:
+                if os.path.lexists(p):
                     try:
-                        os.unlink(target_path)
-                        updated_count += 1
+                        os.unlink(p)
+                        deleted_count += 1
+                        logger.debug("Removed stale link: %s", p)
                     except OSError as e:
-                        logger.warning("Failed to remove non-symlink file for symlink update %s: %s", target_path, e)
-            else:
-                # self.link_type == "hardlink"
-                if os.path.islink(target_path):
-                    # It is a symlink; remove to recreate as hardlink
-                    try:
-                        os.unlink(target_path)
-                        updated_count += 1
-                    except OSError as e:
-                        logger.warning("Failed to remove symlink for hardlink update %s: %s", target_path, e)
-                elif os.path.exists(target_path):
-                    try:
-                        if os.stat(target_path).st_ino == os.stat(source_path).st_ino:
-                            needs_create = False
-                    except OSError:
-                        pass
-                    if needs_create:
-                        try:
-                            os.unlink(target_path)
-                            updated_count += 1
-                        except OSError as e:
-                            logger.warning("Failed to remove stale file for hardlink update %s: %s", target_path, e)
+                        logger.warning("Failed to remove stale link %s: %s", p, e)
+            if stale_paths:
+                self.db.delete_entries(stale_paths)
 
-            if needs_create:
-                try:
-                    if self.link_type == "symlink":
-                        os.symlink(target_source, target_path)
-                    else:
-                        os.link(source_path, target_path)
+            # 2. Initial startup scan if database is empty
+            if not tracked:
+                for root, dirs, files in os.walk(self.vfs_dir):
+                    for file in files:
+                        tp = os.path.join(root, file)
+                        if getattr(self.db, "db_path", None) and os.path.abspath(tp) == os.path.abspath(self.db.db_path):
+                            continue
+                        if tp not in desired_map:
+                            try:
+                                os.unlink(tp)
+                                deleted_count += 1
+                            except OSError:
+                                pass
+
+            # 3. Delta creations/updates
+            db_entries = []
+            for target_path, source_path in desired_map.items():
+                target_source = self._compute_target_source(target_path, source_path)
+                prev = tracked.get(target_path)
+
+                needs_action = True
+                if prev is not None:
+                    if (
+                        prev["link_type"] == self.link_type
+                        and prev["target_source"] == target_source
+                        and os.path.lexists(target_path)
+                    ):
+                        needs_action = False
+
+                if needs_action:
+                    c, u = self._ensure_link(target_path, source_path, target_source)
+                    if c:
+                        created_count += 1
+                    if u:
+                        updated_count += 1
+
+                rec_item = self.last_records_map.get(target_path)
+                if rec_item:
+                    rec, relpath = rec_item
+                    db_entries.append({
+                        "vfs_path": target_path,
+                        "vfs_relpath": relpath,
+                        "source_path": source_path,
+                        "book_id": rec.book_id,
+                        "title": rec.title,
+                        "series": rec.series or "",
+                        "volume": str(rec.volume) if rec.volume is not None else "",
+                        "chapter": str(rec.chapter) if rec.chapter is not None else "",
+                        "type": rec.type_ or self.default_type,
+                        "language": rec.language or self.default_language,
+                        "format": rec.format,
+                        "link_type": self.link_type,
+                        "target_source": target_source,
+                        "last_synced": now,
+                    })
+
+            self.db.upsert_entries(db_entries)
+
+        else:
+            # Full filesystem scan when no DB is configured
+            existing_links: Dict[str, str] = {}
+            for root, dirs, files in os.walk(self.vfs_dir):
+                for file in files:
+                    target_path = os.path.join(root, file)
+                    if os.path.islink(target_path):
+                        existing_links[target_path] = os.readlink(target_path)
+                    elif os.path.isfile(target_path):
+                        existing_links[target_path] = "file"
+
+            for existing_path in existing_links:
+                if existing_path not in desired_map:
+                    try:
+                        os.unlink(existing_path)
+                        deleted_count += 1
+                        logger.debug("Removed stale link: %s", existing_path)
+                    except OSError as e:
+                        logger.warning("Failed to remove stale link %s: %s", existing_path, e)
+
+            for target_path, source_path in desired_map.items():
+                target_source = self._compute_target_source(target_path, source_path)
+                c, u = self._ensure_link(target_path, source_path, target_source)
+                if c:
                     created_count += 1
-                    logger.debug("Linked: %s -> %s", target_path, target_source)
-                except OSError as e:
-                    import errno
-                    if self.link_type == "hardlink" and e.errno == errno.EXDEV:
-                        logger.error(
-                            "Cannot create hardlink across different filesystems/mounts (%s -> %s). "
-                            "Ensure both /calibre and /vfs are on the same filesystem/disk, or use VFS_MODE=symlink.",
-                            source_path, target_path
-                        )
-                    else:
-                        logger.error("Failed to create %s %s -> %s: %s", self.link_type, target_path, target_source, e)
+                if u:
+                    updated_count += 1
 
-        # Clean up empty directories
-        self._prune_empty_dirs(self.vfs_dir)
+        if created_count > 0 or updated_count > 0 or deleted_count > 0:
+            self._prune_empty_dirs(self.vfs_dir)
 
         logger.info(
             "Sync complete. Created: %d, Updated: %d, Deleted: %d (Total in VFS: %d)",
@@ -224,6 +318,8 @@ class SymlinkVFS:
         for root, dirs, files in os.walk(self.vfs_dir):
             for file in files:
                 target_path = os.path.join(root, file)
+                if getattr(self.db, "db_path", None) and os.path.abspath(target_path) == os.path.abspath(self.db.db_path):
+                    continue
                 if target_path not in desired_map:
                     try:
                         is_link = os.path.islink(target_path)
@@ -236,7 +332,10 @@ class SymlinkVFS:
 
         empty_dirs_removed = self._prune_empty_dirs(self.vfs_dir)
 
-        # Run sync to guarantee mode conversion (e.g. symlinks -> hardlinks)
+        if self.db is not None:
+            self.db.clear()
+
+        # Run sync to guarantee mode conversion and repopulate DB
         created, updated, deleted = self.sync(records)
 
         return {

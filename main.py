@@ -15,6 +15,7 @@ import threading
 import time
 
 from calibre_db import CalibreDBReader
+from vfs_database import VFSDatabase
 from vfs_state import state
 from vfs_symlink import SymlinkVFS
 from webui import start_webui_server
@@ -85,6 +86,11 @@ def parse_args() -> argparse.Namespace:
         help="Custom target directory prefix for symlinks (e.g. host path /mnt/user/... or Kavita path) (env: CALIBRE_TARGET_DIR)",
     )
     parser.add_argument(
+        "--db-path",
+        default=os.environ.get("CACHE_DB_PATH", os.environ.get("DB_PATH", "")),
+        help="Path to internal SQLite cache DB (env: CACHE_DB_PATH, default: /config/vfs_cache.db or VFS_DIR/.vfs_cache.db)",
+    )
+    parser.add_argument(
         "--webui",
         action="store_true",
         default=str_to_bool(os.environ.get("WEBUI_ENABLED", "true")),
@@ -121,6 +127,17 @@ def main() -> int:
     logger.info("VFS target directory: %s", args.vfs_dir)
     logger.info("Operating mode: %s", args.mode)
 
+    db_path = args.db_path
+    if not db_path:
+        if os.path.isdir("/config") and os.access("/config", os.W_OK):
+            db_path = "/config/vfs_cache.db"
+        else:
+            db_path = os.path.join(args.vfs_dir, ".vfs_cache.db")
+
+    logger.info("Internal cache database: %s", db_path)
+    db = VFSDatabase(db_path)
+    state.set_db(db)
+
     calibre_reader = CalibreDBReader(args.calibre_dir)
 
     if not calibre_reader.exists():
@@ -142,6 +159,7 @@ def main() -> int:
         default_type=args.default_type,
         calibre_dir=args.calibre_dir,
         target_calibre_dir=args.target_calibre_dir,
+        db=db,
     )
 
     def do_cleanup() -> dict:

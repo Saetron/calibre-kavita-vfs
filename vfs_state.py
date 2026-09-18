@@ -60,8 +60,9 @@ def calculate_units(val: Any) -> float:
 
 
 class VFSState:
-    def __init__(self):
+    def __init__(self, db: Optional[Any] = None):
         self._lock = threading.Lock()
+        self.db = db
         self.last_sync_time: Optional[float] = None
         self.sync_in_progress: bool = False
         self.last_error: Optional[str] = None
@@ -84,6 +85,10 @@ class VFSState:
         # Collisions and item records
         self.collisions: List[Dict[str, Any]] = []
         self.items: List[Dict[str, Any]] = []
+
+    def set_db(self, db: Any) -> None:
+        with self._lock:
+            self.db = db
 
     def set_syncing(self, syncing: bool, error: Optional[str] = None) -> None:
         with self._lock:
@@ -119,9 +124,9 @@ class VFSState:
             books_with_vol = 0
             books_with_ch = 0
 
-            # Build items list
+            # Build in-memory items list only if no DB is attached (to conserve RAM)
             items = []
-            target_to_vfs = {src: tgt for tgt, src in desired_map.items()}
+            target_to_vfs = {src: tgt for tgt, src in desired_map.items()} if not self.db else {}
 
             for rec in records:
                 series_name = rec.series or rec.title or "Unknown"
@@ -144,20 +149,20 @@ class VFSState:
                     books_with_ch += 1
                     ch_sum += ch_units
 
-                vfs_path = target_to_vfs.get(rec.source_path, "")
-
-                items.append({
-                    "book_id": rec.book_id,
-                    "title": rec.title,
-                    "series": rec.series or "",
-                    "language": rec.language or "",
-                    "type": rec.type_ or "",
-                    "volume": str(rec.volume) if rec.volume is not None else "",
-                    "chapter": str(rec.chapter) if rec.chapter is not None else "",
-                    "format": rec.format,
-                    "source_path": rec.source_path,
-                    "vfs_path": vfs_path,
-                })
+                if not self.db:
+                    vfs_path = target_to_vfs.get(rec.source_path, "")
+                    items.append({
+                        "book_id": rec.book_id,
+                        "title": rec.title,
+                        "series": rec.series or "",
+                        "language": rec.language or "",
+                        "type": rec.type_ or "",
+                        "volume": str(rec.volume) if rec.volume is not None else "",
+                        "chapter": str(rec.chapter) if rec.chapter is not None else "",
+                        "format": rec.format,
+                        "source_path": rec.source_path,
+                        "vfs_path": vfs_path,
+                    })
 
             self.total_series = len(series_set)
             self.total_volumes = vol_sum
@@ -195,6 +200,9 @@ class VFSState:
 
     def get_items(self, query: str = "", limit: int = 100, offset: int = 0) -> Dict[str, Any]:
         with self._lock:
+            if self.db is not None:
+                return self.db.query_items(query=query, limit=limit, offset=offset)
+
             filtered = self.items
             if query:
                 q = query.lower()

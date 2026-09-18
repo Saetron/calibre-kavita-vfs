@@ -137,6 +137,7 @@ services:
 |---|---|---|
 | `CALIBRE_DIR` | `/calibre` | Directory containing Calibre's `metadata.db` and book files |
 | `VFS_DIR` | `/vfs` | Target directory for generated Kavita VFS |
+| `CACHE_DB_PATH` | `/config/vfs_cache.db` or `VFS_DIR/.vfs_cache.db` | Path to internal SQLite database for delta syncing & fast search |
 | `CALIBRE_TARGET_DIR` | *(empty / uses CALIBRE_DIR)* | Custom path prefix written into symlinks (useful for Unraid host paths like `/mnt/user/...` or custom Kavita container paths) |
 | `VFS_MODE` | `symlink` | `symlink`, `hardlink`, or `fuse` |
 | `SYNC_INTERVAL` | `60` | Check interval in seconds for Calibre DB updates |
