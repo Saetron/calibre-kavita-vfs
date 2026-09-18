@@ -1,7 +1,7 @@
-"""Kavita VFS Daemon & CLI.
+"""Kavita VFS Daemon, CLI & WebUI.
 
 Bridges Calibre metadata and files to Kavita's expected directory structure:
-language/type/series/series Vol. volume Ch. chapter.ext
+language/type/series/series Vol. volume Ch. chapter {id}.ext
 """
 
 from __future__ import annotations
@@ -11,10 +11,13 @@ import logging
 import os
 import signal
 import sys
+import threading
 import time
 
 from calibre_db import CalibreDBReader
+from vfs_state import state
 from vfs_symlink import SymlinkVFS
+from webui import start_webui_server
 
 logging.basicConfig(
     level=logging.INFO,
@@ -32,22 +35,15 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Create a Kavita-formatted VFS from a Calibre library."
     )
-    data_dir_env = os.environ.get("DATA_DIR", "").strip()
-
-    parser.add_argument(
-        "--data-dir",
-        default=data_dir_env,
-        help="Base directory containing 'calibre' and 'vfs' subdirectories for single-mount setups (env: DATA_DIR)",
-    )
     parser.add_argument(
         "--calibre-dir",
-        default=None,
-        help="Path to Calibre library containing metadata.db (env: CALIBRE_DIR, default: /calibre or <DATA_DIR>/calibre)",
+        default=os.environ.get("CALIBRE_DIR", "/calibre"),
+        help="Path to Calibre library containing metadata.db (env: CALIBRE_DIR, default: /calibre)",
     )
     parser.add_argument(
         "--vfs-dir",
-        default=None,
-        help="Target path for Kavita VFS (env: VFS_DIR, default: /vfs or <DATA_DIR>/vfs)",
+        default=os.environ.get("VFS_DIR", os.environ.get("OUTPUT_DIR", "/vfs")),
+        help="Target path for Kavita VFS (env: VFS_DIR, default: /vfs)",
     )
     parser.add_argument(
         "--mode",
@@ -89,26 +85,30 @@ def parse_args() -> argparse.Namespace:
         help="Custom target directory prefix for symlinks (e.g. host path /mnt/user/... or Kavita path) (env: CALIBRE_TARGET_DIR)",
     )
     parser.add_argument(
+        "--webui",
+        action="store_true",
+        default=str_to_bool(os.environ.get("WEBUI_ENABLED", "true")),
+        help="Enable WebUI status dashboard (env: WEBUI_ENABLED, default: true)",
+    )
+    parser.add_argument(
+        "--no-webui",
+        action="store_false",
+        dest="webui",
+        help="Disable WebUI status dashboard",
+    )
+    parser.add_argument(
+        "--webui-port",
+        type=int,
+        default=int(os.environ.get("WEBUI_PORT", os.environ.get("PORT", "8080"))),
+        help="WebUI port (env: WEBUI_PORT or PORT, default: 8080)",
+    )
+    parser.add_argument(
         "--log-level",
         default=os.environ.get("LOG_LEVEL", "INFO").upper(),
         help="Logging level (DEBUG, INFO, WARNING, ERROR) (env: LOG_LEVEL, default: INFO)",
     )
 
-    args = parser.parse_args()
-
-    data_dir = (args.data_dir or "").strip()
-    if not args.calibre_dir:
-        args.calibre_dir = os.environ.get(
-            "CALIBRE_DIR",
-            os.path.join(data_dir, "calibre") if data_dir else "/calibre",
-        )
-    if not args.vfs_dir:
-        args.vfs_dir = os.environ.get(
-            "VFS_DIR",
-            os.environ.get("OUTPUT_DIR", os.path.join(data_dir, "vfs") if data_dir else "/vfs"),
-        )
-
-    return args
+    return parser.parse_args()
 
 
 def main() -> int:
@@ -131,6 +131,18 @@ def main() -> int:
         if args.once:
             logger.error("Database not found and --once specified. Exiting.")
             return 1
+
+    manual_sync_event = threading.Event()
+
+    # Start WebUI if enabled and not running as a one-shot CLI command
+    if args.webui and not args.once:
+        try:
+            start_webui_server(
+                port=args.webui_port,
+                trigger_sync_callback=lambda: manual_sync_event.set(),
+            )
+        except Exception as e:
+            logger.warning("Could not start WebUI on port %d: %s", args.webui_port, e)
 
     if args.mode == "fuse":
         from vfs_fuse import mount_fuse
@@ -165,6 +177,7 @@ def main() -> int:
         nonlocal stop_requested
         logger.info("Signal received (%s). Shutting down...", sig)
         stop_requested = True
+        manual_sync_event.set()
 
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)
@@ -172,16 +185,32 @@ def main() -> int:
     last_synced_mtime = -1.0
 
     while not stop_requested:
+        force_sync = manual_sync_event.is_set()
+        if force_sync:
+            manual_sync_event.clear()
+            logger.info("Manual synchronization triggered via WebUI/API.")
+
         if calibre_reader.exists():
             current_mtime = calibre_reader.get_last_modified()
-            if current_mtime != last_synced_mtime:
-                logger.info("Calibre database updated (or first run). Synchronizing VFS...")
+            if force_sync or current_mtime != last_synced_mtime:
+                logger.info("Calibre database updated (or manual sync). Synchronizing VFS...")
+                state.set_syncing(True)
                 try:
                     records = calibre_reader.get_all_book_files()
+                    desired_map = syncer.build_desired_tree(records)
                     syncer.sync(records)
+                    state.update_sync_results(
+                        records=records,
+                        desired_map=desired_map,
+                        collisions=syncer.last_collisions,
+                        mode=args.mode,
+                        calibre_dir=args.calibre_dir,
+                        vfs_dir=args.vfs_dir,
+                    )
                     last_synced_mtime = current_mtime
                 except Exception as e:
                     logger.exception("Error during synchronization: %s", e)
+                    state.set_syncing(False, error=str(e))
             else:
                 logger.debug("Database unchanged. Skipping sync.")
         else:
@@ -190,9 +219,9 @@ def main() -> int:
         if args.once:
             break
 
-        # Sleep in small slices to respond promptly to SIGTERM
+        # Sleep in small slices to respond promptly to SIGTERM or manual sync trigger
         for _ in range(max(1, args.interval)):
-            if stop_requested:
+            if stop_requested or manual_sync_event.is_set():
                 break
             time.sleep(1)
 

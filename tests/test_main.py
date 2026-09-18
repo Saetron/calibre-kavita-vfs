@@ -79,12 +79,12 @@ class TestMainCLI(unittest.TestCase):
 
         expected_file = os.path.join(
             self.vfs_dir,
-            "eng/Manga/One Piece/One Piece Vol. 10 Ch. 100.cbz"
+            "eng/Manga/One Piece/One Piece Vol. 10 Ch. 100 {1}.cbz"
         )
         self.assertTrue(os.path.exists(expected_file))
         self.assertTrue(os.path.islink(expected_file))
 
-    def test_main_cli_data_dir(self):
+    def test_main_cli_single_mount(self):
         repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         with tempfile.TemporaryDirectory() as single_mount_dir:
             calibre_subdir = os.path.join(single_mount_dir, "calibre")
@@ -103,7 +103,8 @@ class TestMainCLI(unittest.TestCase):
             cmd = [
                 sys.executable,
                 "main.py",
-                "--data-dir", single_mount_dir,
+                "--calibre-dir", calibre_subdir,
+                "--vfs-dir", vfs_subdir,
                 "--mode", "hardlink",
                 "--once",
             ]
@@ -112,7 +113,7 @@ class TestMainCLI(unittest.TestCase):
 
             expected_file = os.path.join(
                 vfs_subdir,
-                "eng/Manga/One Piece/One Piece Vol. 10 Ch. 100.cbz"
+                "eng/Manga/One Piece/One Piece Vol. 10 Ch. 100 {1}.cbz"
             )
             self.assertTrue(os.path.exists(expected_file))
             # Verify it is a real file (hardlink, not symlink)

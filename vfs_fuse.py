@@ -73,6 +73,7 @@ class KavitaFuseFS(Operations):
                 series=rec.series,
                 volume=rec.volume,
                 chapter=rec.chapter,
+                calibre_id=rec.book_id,
                 extension=ext,
                 title=rec.title,
                 default_language=self.default_language,

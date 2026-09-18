@@ -1,6 +1,6 @@
 # Calibre to Kavita VFS
 
-A dockerized tool that connects to your Calibre library (`metadata.db`) and automatically generates a Virtual File System (VFS) structure optimized for **Kavita**.
+A dockerized tool that connects to your Calibre library (`metadata.db`) and automatically generates a Virtual File System (VFS) structure optimized for **Kavita**, complete with a live **WebUI Dashboard**.
 
 ---
 
@@ -9,7 +9,7 @@ A dockerized tool that connects to your Calibre library (`metadata.db`) and auto
 The tool organizes books into the exact hierarchy expected by Kavita:
 
 ```text
-language/type/series/series Vol. volume Ch. chapter.ext
+language/type/series/series Vol. volume Ch. chapter {calibre_id}.ext
 ```
 
 ### Naming Rules:
@@ -17,15 +17,34 @@ language/type/series/series Vol. volume Ch. chapter.ext
 - **`type`**: Extracted from the custom Calibre column `type` (e.g. `Manga`, `Comic`, `Light Novel`, `Book`). Defaults to `DEFAULT_TYPE`.
 - **`series`**: Extracted from Calibre's series. If the book does not have a series assigned, it defaults to the book's title.
 - **`Vol.` & `Ch.`**: Only written if set in Calibre:
-  - Both set: `Series Vol. 1 Ch. 12.cbz`
-  - Volume only: `Series Vol. 1.cbz`
-  - Chapter only: `Series Ch. 12.cbz`
-  - Neither set: `Series.cbz`
-  - Ranges supported: `Series Vol. 1-3 Ch. 1-25.cbz`
+  - Both set: `Series Vol. 1 Ch. 12 {42}.cbz`
+  - Volume only: `Series Vol. 1 {42}.cbz`
+  - Chapter only: `Series Ch. 12 {42}.cbz`
+  - Neither set: `Series {42}.cbz`
+  - Ranges supported: `Series Vol. 1-3 Ch. 1-25 {42}.cbz`
+- **`{calibre_id}`**: The Calibre book ID in curly brackets is added directly before the file extension, ensuring uniqueness and easy reference.
 - **Number & String formatting**:
-  - Strings are supported directly (e.g. `1-3`, `01-05`, `Special 1`).
+  - Strings and ranges are supported directly (e.g. `1-3`, `01-05`, `Special 1`).
   - Cleans floating point numbers (e.g. `1.0` becomes `1`, while `1.5` is preserved).
   - Automatically strips redundant user-typed prefixes like `Vol.` or `Ch.` if entered into Calibre.
+
+---
+
+## WebUI Dashboard
+
+The container includes a built-in, lightweight web dashboard accessible at:
+```text
+http://<server-ip>:8080
+```
+
+### Features:
+- **Live Statistics**:
+  - Total books and series.
+  - **Aggregated Volumes & Chapters**: Calculates and sums all individual volumes, chapters, and ranges across your entire library (e.g. `Vol. 1-3` counts as 3 volumes).
+  - Breakdown by custom type (Manga, Comic, etc.) and language.
+- **Collision Monitor**: Highlights any conflicting filename mappings and shows how they were automatically disambiguated.
+- **Searchable Book Explorer**: Filterable and searchable table of every mapped book showing its Calibre ID, title, series, volume, chapter, VFS path, and source file.
+- **Manual Sync Button**: Trigger an immediate VFS synchronization without waiting for the check interval.
 
 ---
 
@@ -64,7 +83,7 @@ The tool automatically detects both normalized and unnormalized custom columns w
 
 ## Quickstart with Docker
 
-### 1. `docker-compose.yml`
+### `docker-compose.yml`
 
 ```yaml
 version: "3.8"
@@ -82,9 +101,17 @@ services:
       - SYNC_INTERVAL=60           # Sync check interval in seconds
       - DEFAULT_LANGUAGE=eng
       - DEFAULT_TYPE=Manga
+      - WEBUI_ENABLED=true
+      - WEBUI_PORT=8080
+    ports:
+      - "8080:8080"                # WebUI Dashboard
     volumes:
+      # Option A (Standard Symlinks): Separate mounts
       - /path/to/calibre/library:/calibre:ro
       - /path/to/kavita/vfs_library:/vfs
+      # Option B (Hardlinks on single mount):
+      # - /path/to/shared/data:/data
+      # (and set CALIBRE_DIR=/data/calibre, VFS_DIR=/data/vfs, VFS_MODE=hardlink)
 
   kavita:
     image: jvmilazz0/kavita:latest
@@ -101,26 +128,12 @@ services:
       - /path/to/calibre/library:/calibre:ro
 ```
 
-### 2. Build and Run
-
-```bash
-# Build the image
-docker compose build
-
-# Start services in the background
-docker compose up -d
-
-# View logs
-docker compose logs -f calibre-kavita-vfs
-```
-
 ---
 
 ## Environment Variables
 
 | Variable | Default | Description |
 |---|---|---|
-| `DATA_DIR` | *(empty)* | Base single-mount directory. If set (e.g. `/data`), `CALIBRE_DIR` defaults to `/data/calibre` and `VFS_DIR` defaults to `/data/vfs`. Essential for hardlinks! |
 | `CALIBRE_DIR` | `/calibre` | Directory containing Calibre's `metadata.db` and book files |
 | `VFS_DIR` | `/vfs` | Target directory for generated Kavita VFS |
 | `CALIBRE_TARGET_DIR` | *(empty / uses CALIBRE_DIR)* | Custom path prefix written into symlinks (useful for Unraid host paths like `/mnt/user/...` or custom Kavita container paths) |
@@ -130,6 +143,8 @@ docker compose logs -f calibre-kavita-vfs
 | `RELATIVE_LINKS` | `false` | When using symlink mode, create relative symlinks |
 | `DEFAULT_LANGUAGE` | `unknown` | Fallback language code if not set in Calibre |
 | `DEFAULT_TYPE` | `Unknown` | Fallback type if custom column `type` is not set |
+| `WEBUI_ENABLED` | `true` | Enable WebUI status dashboard |
+| `WEBUI_PORT` | `8080` | Port to serve the WebUI dashboard |
 | `PUID` | `1000` | User ID for file ownership |
 | `PGID` | `1000` | Group ID for file ownership |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
@@ -146,7 +161,8 @@ If you map `-v /mnt/user/data/calibre:/calibre` and `-v /mnt/user/data/vfs:/vfs`
 - **Host Share**: `/mnt/user/data`
 - **In `calibre-kavita-vfs` container**:
   - Mount: `/mnt/user/data` -> `/data`
-  - Set: `DATA_DIR=/data` (or `CALIBRE_DIR=/data/calibre` and `VFS_DIR=/data/vfs`)
+  - Set: `CALIBRE_DIR=/data/calibre`
+  - Set: `VFS_DIR=/data/vfs`
   - Set: `VFS_MODE=hardlink`
 - **In `kavita` container**:
   - Mount: `/mnt/user/data/vfs` -> `/data`

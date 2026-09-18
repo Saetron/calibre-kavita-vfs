@@ -15,11 +15,7 @@ if ! getent passwd "$PUID" >/dev/null 2>&1; then
 fi
 
 # Resolve VFS directory for permission adjustment
-TARGET_VFS="${VFS_DIR:-${OUTPUT_DIR:-}}"
-if [ -z "$TARGET_VFS" ] && [ -n "$DATA_DIR" ]; then
-    TARGET_VFS="$DATA_DIR/vfs"
-fi
-TARGET_VFS="${TARGET_VFS:-/vfs}"
+TARGET_VFS="${VFS_DIR:-${OUTPUT_DIR:-/vfs}}"
 
 if [ -d "$TARGET_VFS" ]; then
     chown -R "$PUID:$PGID" "$TARGET_VFS" 2>/dev/null || true

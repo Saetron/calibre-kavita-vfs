@@ -35,6 +35,8 @@ class SymlinkVFS:
         self.calibre_dir = os.path.abspath(calibre_dir)
         self.target_calibre_dir = target_calibre_dir.strip() if target_calibre_dir else None
 
+        self.last_collisions: List[Dict[str, Any]] = []
+
         if self.link_type not in ("symlink", "hardlink"):
             raise ValueError(f"Unsupported link_type: {link_type}. Must be 'symlink' or 'hardlink'")
 
@@ -43,11 +45,12 @@ class SymlinkVFS:
     ) -> Dict[str, str]:
         """Map absolute target file paths in VFS to source file paths in Calibre.
 
-        Handles collisions by suffixing book_id if multiple files map to the same path.
+        Handles collisions by suffixing duplicate index if multiple files map to the same path.
         """
+        self.last_collisions = []
         desired: Dict[str, str] = {}
         # Keep track of paths to detect and resolve collisions
-        used_relpaths: Dict[str, int] = {}
+        used_relpaths: Dict[str, Dict[str, Any]] = {}
 
         for rec in records:
             _, ext = os.path.splitext(rec.source_path)
@@ -57,6 +60,7 @@ class SymlinkVFS:
                 series=rec.series,
                 volume=rec.volume,
                 chapter=rec.chapter,
+                calibre_id=rec.book_id,
                 extension=ext,
                 title=rec.title,
                 default_language=self.default_language,
@@ -65,11 +69,28 @@ class SymlinkVFS:
 
             # Check for collision
             if relpath in used_relpaths:
-                # Disambiguate by appending book_id before extension
+                prior = used_relpaths[relpath]
                 base, dot_ext = os.path.splitext(relpath)
-                relpath = f"{base} ({rec.book_id}){dot_ext}"
+                disambiguated = f"{base}_collision_{len(self.last_collisions) + 1}{dot_ext}"
+                collision_info = {
+                    "relpath": relpath,
+                    "existing_book_id": prior["book_id"],
+                    "existing_source": prior["source_path"],
+                    "colliding_book_id": rec.book_id,
+                    "colliding_source": rec.source_path,
+                    "resolved_path": disambiguated,
+                }
+                self.last_collisions.append(collision_info)
+                logger.warning(
+                    "Collision detected for path '%s'! Books #%s and #%s. Resolved to '%s'",
+                    relpath,
+                    prior["book_id"],
+                    rec.book_id,
+                    disambiguated,
+                )
+                relpath = disambiguated
 
-            used_relpaths[relpath] = rec.book_id
+            used_relpaths[relpath] = {"book_id": rec.book_id, "source_path": rec.source_path}
             target_path = os.path.join(self.vfs_dir, relpath)
             desired[target_path] = rec.source_path
 

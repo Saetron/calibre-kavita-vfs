@@ -93,6 +93,24 @@ class TestFormatter(unittest.TestCase):
         )
         self.assertEqual(fn7, "Bleach Vol. 1-3 Ch. 5-10.cbz")
 
+        # 8. Filename with calibre_id in curly brackets
+        fn8 = build_kavita_filename(
+            series="One Piece",
+            volume=10,
+            chapter=100,
+            calibre_id=42,
+            extension="cbz",
+        )
+        self.assertEqual(fn8, "One Piece Vol. 10 Ch. 100 {42}.cbz")
+
+        # 9. Filename with calibre_id and no vol/ch
+        fn9 = build_kavita_filename(
+            series="Solo Leveling",
+            calibre_id=99,
+            extension="pdf",
+        )
+        self.assertEqual(fn9, "Solo Leveling {99}.pdf")
+
     def test_build_vfs_relpath(self):
         path = build_vfs_relpath(
             language="eng",
@@ -100,9 +118,10 @@ class TestFormatter(unittest.TestCase):
             series="Chainsaw Man",
             volume=2,
             chapter=10,
+            calibre_id=105,
             extension=".cbz",
         )
-        self.assertEqual(path, "eng/Manga/Chainsaw Man/Chainsaw Man Vol. 2 Ch. 10.cbz")
+        self.assertEqual(path, "eng/Manga/Chainsaw Man/Chainsaw Man Vol. 2 Ch. 10 {105}.cbz")
 
         # Missing language and type defaults
         path_default = build_vfs_relpath(

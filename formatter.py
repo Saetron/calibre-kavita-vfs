@@ -87,15 +87,17 @@ def build_kavita_filename(
     series: str,
     volume: Any = None,
     chapter: Any = None,
+    calibre_id: Optional[Any] = None,
     extension: str = "",
     title: Optional[str] = None,
 ) -> str:
     """Build filename according to:
 
-    {series} Vol. {volume} Ch. {chapter}.{ext}
+    {series}[ Vol. {volume}][ Ch. {chapter}][ {calibre_id}].{ext}
 
     Only include 'Vol. {volume}' if volume is set.
     Only include 'Ch. {chapter}' if chapter is set.
+    Includes '{calibre_id}' in curly brackets before extension if provided.
     Supports string ranges (e.g. volume='1-3' -> 'Vol. 1-3').
     """
     parts = []
@@ -109,6 +111,9 @@ def build_kavita_filename(
     ch_str = clean_ch_string(chapter)
     if ch_str is not None:
         parts.append(f"Ch. {sanitize_filename_component(ch_str)}")
+
+    if calibre_id is not None and str(calibre_id).strip():
+        parts.append(f"{{{str(calibre_id).strip()}}}")
 
     base_name = " ".join(parts)
 
@@ -124,12 +129,13 @@ def build_vfs_relpath(
     series: Optional[str],
     volume: Any = None,
     chapter: Any = None,
+    calibre_id: Optional[Any] = None,
     extension: str = "",
     title: Optional[str] = None,
     default_language: str = "unknown",
     default_type: str = "Unknown",
 ) -> str:
-    """Build relative path: language/type/series/series Vol. volume Ch. chapter.ext
+    """Build relative path: language/type/series/series Vol. volume Ch. chapter {id}.ext
 
     Missing values will fall back to specified defaults.
     If series is missing, title is used as series folder/name.
@@ -150,6 +156,7 @@ def build_vfs_relpath(
         series=series_val,
         volume=volume,
         chapter=chapter,
+        calibre_id=calibre_id,
         extension=extension,
         title=title,
     )

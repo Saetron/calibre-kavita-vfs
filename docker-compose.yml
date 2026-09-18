@@ -16,14 +16,18 @@ services:
       - RELATIVE_LINKS=false       # Set to true if using relative symlinks
       - DEFAULT_LANGUAGE=eng       # Fallback if book has no language set
       - DEFAULT_TYPE=Manga         # Fallback if book has no custom '#type' set
+      - WEBUI_ENABLED=true         # Enable WebUI dashboard
+      - WEBUI_PORT=8080            # WebUI port
       - LOG_LEVEL=INFO
+    ports:
+      - "8080:8080"                # WebUI Dashboard
     volumes:
       # Option A (Standard Symlinks): Separate mounts
       - /path/to/calibre/library:/calibre:ro
       - /path/to/kavita/vfs_library:/vfs
-      # Option B (Hardlinks): Mount a single shared parent directory
+      # Option B (Hardlinks on single mount):
       # - /path/to/shared/data:/data
-      # (and set DATA_DIR=/data, VFS_MODE=hardlink in environment)
+      # (and set CALIBRE_DIR=/data/calibre, VFS_DIR=/data/vfs, VFS_MODE=hardlink)
     # If running with VFS_MODE=fuse:
     # cap_add:
     #   - SYS_ADMIN

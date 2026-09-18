@@ -63,8 +63,8 @@ class TestSync(unittest.TestCase):
         self.assertEqual(deleted, 0)
 
         # Expected files in VFS
-        file1 = os.path.join(self.temp_vfs.name, "eng/Manga/Naruto/Naruto Vol. 1 Ch. 1.cbz")
-        file2 = os.path.join(self.temp_vfs.name, "eng/Manga/Naruto/Naruto Vol. 1 Ch. 2.cbz")
+        file1 = os.path.join(self.temp_vfs.name, "eng/Manga/Naruto/Naruto Vol. 1 Ch. 1 {1}.cbz")
+        file2 = os.path.join(self.temp_vfs.name, "eng/Manga/Naruto/Naruto Vol. 1 Ch. 2 {2}.cbz")
 
         self.assertTrue(os.path.islink(file1))
         self.assertTrue(os.path.islink(file2))
@@ -107,7 +107,7 @@ class TestSync(unittest.TestCase):
         )
 
         vfs.sync([record])
-        target = os.path.join(self.temp_vfs.name, "eng/Manga/Naruto/Naruto Vol. 1 Ch. 1.cbz")
+        target = os.path.join(self.temp_vfs.name, "eng/Manga/Naruto/Naruto Vol. 1 Ch. 1 {1}.cbz")
         self.assertTrue(os.path.islink(target))
         link_dest = os.readlink(target)
         # Verify it is relative
@@ -138,7 +138,7 @@ class TestSync(unittest.TestCase):
         )
 
         vfs.sync([record])
-        target = os.path.join(self.temp_vfs.name, "eng/Manga/Naruto/Naruto Vol. 1 Ch. 1.cbz")
+        target = os.path.join(self.temp_vfs.name, "eng/Manga/Naruto/Naruto Vol. 1 Ch. 1 {1}.cbz")
         self.assertTrue(os.path.islink(target))
         link_dest = os.readlink(target)
         # Verify it has been translated to the target_calibre_dir prefix
