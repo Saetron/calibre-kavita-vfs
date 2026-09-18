@@ -45,7 +45,11 @@ class TestWebUI(unittest.TestCase):
         status, headers, body = execute_request("GET", "/")
         self.assertEqual(status, 200)
         self.assertIn("text/html", headers.get("content-type", ""))
-        self.assertIn("Kavita VFS Dashboard", body.decode("utf-8"))
+        html = body.decode("utf-8")
+        self.assertIn("Kavita VFS Dashboard", html)
+        self.assertIn("function fetchStatus()", html)
+        self.assertIn("function fetchBooks()", html)
+        self.assertIn("function goToPage(", html)
 
     def test_get_api_status(self):
         status, headers, body = execute_request("GET", "/api/status")

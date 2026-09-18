@@ -170,6 +170,63 @@ class VFSDatabase:
                 "items": items,
             }
 
+    def get_summary_stats(self) -> Dict[str, Any]:
+        """Compute aggregate summary stats from database entries."""
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute("SELECT COUNT(*), COUNT(DISTINCT series) FROM vfs_entries")
+            row = cur.fetchone()
+            total_books = row[0] if row else 0
+            total_series = row[1] if row else 0
+
+            cur.execute("SELECT type, COUNT(*) FROM vfs_entries GROUP BY type")
+            type_counts = {r[0] or "Unknown": r[1] for r in cur.fetchall()}
+
+            cur.execute("SELECT language, COUNT(*) FROM vfs_entries GROUP BY language")
+            language_counts = {r[0] or "unknown": r[1] for r in cur.fetchall()}
+
+            cur.execute("SELECT volume, chapter FROM vfs_entries")
+            rows = cur.fetchall()
+            vol_sum = 0.0
+            ch_sum = 0.0
+            books_with_vol = 0
+            books_with_ch = 0
+            for r in rows:
+                v = r["volume"]
+                c = r["chapter"]
+                if v and str(v).strip():
+                    books_with_vol += 1
+                    try:
+                        val_str = str(v).strip().lower().replace("vol.", "").replace("vol", "").replace("v", "").strip()
+                        if "-" in val_str:
+                            vol_sum += float(val_str.split("-")[-1].strip())
+                        else:
+                            vol_sum += float(val_str)
+                    except (ValueError, IndexError):
+                        vol_sum += 1.0
+
+                if c and str(c).strip():
+                    books_with_ch += 1
+                    try:
+                        val_str = str(c).strip().lower().replace("ch.", "").replace("ch", "").replace("c", "").strip()
+                        if "-" in val_str:
+                            ch_sum += float(val_str.split("-")[-1].strip())
+                        else:
+                            ch_sum += float(val_str)
+                    except (ValueError, IndexError):
+                        ch_sum += 1.0
+
+            return {
+                "total_books": total_books,
+                "total_series": total_series,
+                "total_volumes": vol_sum,
+                "total_chapters": ch_sum,
+                "books_with_volume": books_with_vol,
+                "books_with_chapter": books_with_ch,
+                "type_counts": type_counts,
+                "language_counts": language_counts,
+            }
+
     def clear(self) -> None:
         """Clear all entries from the database."""
         with self._lock, self._conn:

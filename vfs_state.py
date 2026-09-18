@@ -89,6 +89,20 @@ class VFSState:
     def set_db(self, db: Any) -> None:
         with self._lock:
             self.db = db
+            if hasattr(db, "get_summary_stats"):
+                try:
+                    stats = db.get_summary_stats()
+                    if stats.get("total_books", 0) > 0 and self.total_books == 0:
+                        self.total_books = stats["total_books"]
+                        self.total_series = stats["total_series"]
+                        self.total_volumes = stats["total_volumes"]
+                        self.total_chapters = stats["total_chapters"]
+                        self.books_with_volume = stats["books_with_volume"]
+                        self.books_with_chapter = stats["books_with_chapter"]
+                        self.type_counts = dict(stats["type_counts"])
+                        self.language_counts = dict(stats["language_counts"])
+                except Exception as e:
+                    logger.debug("Could not read initial stats from database: %s", e)
 
     def set_syncing(self, syncing: bool, error: Optional[str] = None) -> None:
         with self._lock:

@@ -388,6 +388,77 @@ HTML_DASHBOARD = """<!DOCTYPE html>
     let searchQuery = '';
     let searchDebounceTimer = null;
 
+    async function fetchStatus() {
+      try {
+        const res = await fetch('/api/status');
+        const data = await res.json();
+
+        // Update badges
+        document.getElementById('mode-badge').innerText = (data.mode || 'SYMLINK').toUpperCase();
+        const syncBadge = document.getElementById('sync-status-badge');
+        if (data.sync_in_progress) {
+          syncBadge.className = 'badge badge-warning';
+          syncBadge.innerText = 'Syncing...';
+          document.getElementById('sync-btn').disabled = true;
+        } else if (data.last_error) {
+          syncBadge.className = 'badge badge-danger';
+          syncBadge.innerText = 'Error';
+          document.getElementById('sync-btn').disabled = false;
+        } else {
+          syncBadge.className = 'badge badge-success';
+          syncBadge.innerText = 'Idle';
+          document.getElementById('sync-btn').disabled = false;
+        }
+
+        // Stats
+        document.getElementById('stat-books').innerText = (data.total_books || 0).toLocaleString();
+        document.getElementById('stat-series').innerText = (data.total_series || 0).toLocaleString();
+        document.getElementById('stat-volumes').innerText = (data.total_volumes || 0).toLocaleString();
+        document.getElementById('stat-volumes-sub').innerText = `${data.books_with_volume || 0} books with volume`;
+        document.getElementById('stat-chapters').innerText = (data.total_chapters || 0).toLocaleString();
+        document.getElementById('stat-chapters-sub').innerText = `${data.books_with_chapter || 0} books with chapter`;
+        document.getElementById('stat-collisions').innerText = data.collision_count || 0;
+
+        const collCard = document.getElementById('stat-collisions');
+        if (data.collision_count > 0) {
+          collCard.style.color = 'var(--danger)';
+        } else {
+          collCard.style.color = 'var(--success)';
+        }
+
+        // Collisions panel
+        const collBox = document.getElementById('collision-box');
+        if (data.collision_count > 0) {
+          collBox.classList.add('active');
+          const tbody = document.getElementById('collision-rows');
+          tbody.innerHTML = (data.collisions || []).map(c => `
+            <tr>
+              <td>${c.relpath}</td>
+              <td>#${c.existing_book_id}</td>
+              <td>#${c.colliding_book_id}</td>
+              <td style="color: var(--success);">${c.resolved_path}</td>
+            </tr>
+          `).join('');
+        } else {
+          collBox.classList.remove('active');
+        }
+
+        // Distributions
+        const typeChips = document.getElementById('type-chips');
+        typeChips.innerHTML = Object.entries(data.type_counts || {}).map(([k, v]) => `
+          <div class="chip">${k}: <strong>${v}</strong></div>
+        `).join('') || '<span class="card-sub">None</span>';
+
+        const langChips = document.getElementById('lang-chips');
+        langChips.innerHTML = Object.entries(data.language_counts || {}).map(([k, v]) => `
+          <div class="chip">${k}: <strong>${v}</strong></div>
+        `).join('') || '<span class="card-sub">None</span>';
+
+      } catch (err) {
+        console.error('Failed to fetch status:', err);
+      }
+    }
+
     function onSearchInput() {
       clearTimeout(searchDebounceTimer);
       searchDebounceTimer = setTimeout(() => {

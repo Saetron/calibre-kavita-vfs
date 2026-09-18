@@ -97,6 +97,15 @@ class TestVFSDatabase(unittest.TestCase):
         self.assertEqual(id_res["total"], 1)
         self.assertEqual(id_res["items"][0]["book_id"], 10)
 
+        # Summary stats test
+        stats = self.db.get_summary_stats()
+        self.assertEqual(stats["total_books"], 3)
+        self.assertEqual(stats["total_series"], 2)
+        self.assertEqual(stats["total_volumes"], 3.0)  # 1 + 2
+        self.assertEqual(stats["total_chapters"], 5.0)  # 5
+        self.assertEqual(stats["type_counts"]["Manga"], 2)
+        self.assertEqual(stats["type_counts"]["Comic"], 1)
+
     def test_delete_and_clear(self):
         entries = [
             {

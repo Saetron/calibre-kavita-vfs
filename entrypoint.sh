@@ -21,6 +21,10 @@ if [ -d "$TARGET_VFS" ]; then
     chown -R "$PUID:$PGID" "$TARGET_VFS" 2>/dev/null || true
 fi
 
+if [ -d "/config" ]; then
+    chown -R "$PUID:$PGID" /config 2>/dev/null || true
+fi
+
 # If gosu is available and running as root, drop privileges (unless in FUSE mode where root/fuse group may be required)
 if [ "$(id -u)" = "0" ] && [ "$VFS_MODE" != "fuse" ] && command -v gosu >/dev/null 2>&1; then
     exec gosu "$PUID:$PGID" python3 /app/main.py "$@"
