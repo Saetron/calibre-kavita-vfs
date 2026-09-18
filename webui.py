@@ -216,9 +216,16 @@ HTML_DASHBOARD = """<!DOCTYPE html>
       <div class="actions">
         <span id="mode-badge" class="badge badge-primary">Symlink</span>
         <span id="sync-status-badge" class="badge badge-success">Idle</span>
+        <button id="cleanup-btn" class="btn" style="background-color: #475569; color: #f8fafc;" onclick="triggerCleanup()">🧹 Cleanup VFS</button>
         <button id="sync-btn" class="btn" onclick="triggerSync()">⚡ Sync Now</button>
       </div>
     </header>
+
+    <!-- Cleanup Notification Box -->
+    <div id="cleanup-box" class="alert-panel" style="background: rgba(56, 189, 248, 0.15); border-color: var(--primary);">
+      <h3 style="color: var(--primary);">🧹 Cleanup Completed</h3>
+      <p id="cleanup-msg"></p>
+    </div>
 
     <!-- Collision Warning Box -->
     <div id="collision-box" class="alert-panel">
@@ -443,6 +450,30 @@ HTML_DASHBOARD = """<!DOCTYPE html>
       }
     }
 
+    async function triggerCleanup() {
+      if (!confirm("This will scan the VFS folder, remove any unregistered files or broken links, prune empty directories, and ensure all files match current mode (symlink/hardlink). Proceed?")) {
+        return;
+      }
+      const btn = document.getElementById('cleanup-btn');
+      btn.disabled = true;
+      btn.innerText = '⏳ Cleaning...';
+      try {
+        const res = await fetch('/api/cleanup', { method: 'POST' });
+        const data = await res.json();
+        const box = document.getElementById('cleanup-box');
+        box.style.display = 'block';
+        document.getElementById('cleanup-msg').innerText = `Cleaned ${data.removed_count} unregistered file(s)/link(s) and pruned ${data.empty_dirs_removed} empty folder(s). Mode sync: ${data.sync_created} created, ${data.sync_updated} updated.`;
+        setTimeout(() => { box.style.display = 'none'; }, 8000);
+        fetchStatus();
+        fetchBooks();
+      } catch (err) {
+        alert('Cleanup failed: ' + err);
+      } finally {
+        btn.disabled = false;
+        btn.innerText = '🧹 Cleanup VFS';
+      }
+    }
+
     // Polling
     fetchStatus();
     fetchBooks();
@@ -455,6 +486,7 @@ HTML_DASHBOARD = """<!DOCTYPE html>
 
 class WebUIHandler(BaseHTTPRequestHandler):
     trigger_sync_callback: Optional[Callable[[], None]] = None
+    trigger_cleanup_callback: Optional[Callable[[], Dict[str, Any]]] = None
 
     def log_message(self, format, *args):
         # Silence standard HTTP access logging to prevent cluttering application logs
@@ -506,6 +538,21 @@ class WebUIHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(json.dumps({"status": "sync_triggered"}).encode("utf-8"))
+
+        elif parsed.path == "/api/cleanup":
+            result: Dict[str, Any] = {"status": "cleanup_completed", "removed_count": 0, "empty_dirs_removed": 0}
+            if WebUIHandler.trigger_cleanup_callback:
+                try:
+                    result = WebUIHandler.trigger_cleanup_callback()
+                except Exception as e:
+                    logger.exception("Error in cleanup callback: %s", e)
+                    result["error"] = str(e)
+
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(result).encode("utf-8"))
+
         else:
             self.send_response(HTTPStatus.NOT_FOUND)
             self.end_headers()
@@ -514,9 +561,11 @@ class WebUIHandler(BaseHTTPRequestHandler):
 def start_webui_server(
     port: int = 8080,
     trigger_sync_callback: Optional[Callable[[], None]] = None,
+    trigger_cleanup_callback: Optional[Callable[[], Dict[str, Any]]] = None,
 ) -> ThreadingHTTPServer:
     """Start the WebUI HTTP server in a daemon thread."""
     WebUIHandler.trigger_sync_callback = staticmethod(trigger_sync_callback) if trigger_sync_callback else None
+    WebUIHandler.trigger_cleanup_callback = staticmethod(trigger_cleanup_callback) if trigger_cleanup_callback else None
     server = ThreadingHTTPServer(("0.0.0.0", port), WebUIHandler)
     server_thread = threading.Thread(target=server.serve_forever, daemon=True)
     server_thread.start()

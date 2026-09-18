@@ -141,30 +141,45 @@ class SymlinkVFS:
                     target_source = os.path.relpath(source_path, parent_dir)
 
             needs_create = True
-            if os.path.islink(target_path):
-                current_link = os.readlink(target_path)
-                if current_link == target_source:
-                    needs_create = False
-                else:
+            if self.link_type == "symlink":
+                if os.path.islink(target_path):
+                    current_link = os.readlink(target_path)
+                    if current_link == target_source:
+                        needs_create = False
+                    else:
+                        try:
+                            os.unlink(target_path)
+                            updated_count += 1
+                        except OSError as e:
+                            logger.warning("Failed to remove link for update %s: %s", target_path, e)
+                elif os.path.exists(target_path):
+                    # File exists but is not a symlink (e.g. was a hardlink); remove to recreate as symlink
                     try:
                         os.unlink(target_path)
                         updated_count += 1
                     except OSError as e:
-                        logger.warning("Failed to remove link for update %s: %s", target_path, e)
-            elif os.path.exists(target_path):
-                # For hardlinks, check if st_ino matches
-                if self.link_type == "hardlink":
+                        logger.warning("Failed to remove non-symlink file for symlink update %s: %s", target_path, e)
+            else:
+                # self.link_type == "hardlink"
+                if os.path.islink(target_path):
+                    # It is a symlink; remove to recreate as hardlink
+                    try:
+                        os.unlink(target_path)
+                        updated_count += 1
+                    except OSError as e:
+                        logger.warning("Failed to remove symlink for hardlink update %s: %s", target_path, e)
+                elif os.path.exists(target_path):
                     try:
                         if os.stat(target_path).st_ino == os.stat(source_path).st_ino:
                             needs_create = False
                     except OSError:
                         pass
-                if needs_create:
-                    try:
-                        os.unlink(target_path)
-                        updated_count += 1
-                    except OSError as e:
-                        logger.warning("Failed to remove file for link update %s: %s", target_path, e)
+                    if needs_create:
+                        try:
+                            os.unlink(target_path)
+                            updated_count += 1
+                        except OSError as e:
+                            logger.warning("Failed to remove stale file for hardlink update %s: %s", target_path, e)
 
             if needs_create:
                 try:
@@ -197,14 +212,53 @@ class SymlinkVFS:
         )
         return created_count, updated_count, deleted_count
 
-    def _prune_empty_dirs(self, root_dir: str) -> None:
-        """Recursively remove empty directories."""
+    def cleanup_unregistered(self, records: List[BookFileRecord]) -> Dict[str, Any]:
+        """Scan VFS directory and remove any file, symlink, or broken link not in desired_map.
+
+        Also cleans empty directories and ensures all links match current mode.
+        """
+        os.makedirs(self.vfs_dir, exist_ok=True)
+        desired_map = self.build_desired_tree(records)
+        removed_files = []
+
+        for root, dirs, files in os.walk(self.vfs_dir):
+            for file in files:
+                target_path = os.path.join(root, file)
+                if target_path not in desired_map:
+                    try:
+                        is_link = os.path.islink(target_path)
+                        os.unlink(target_path)
+                        rel = os.path.relpath(target_path, self.vfs_dir)
+                        removed_files.append({"path": rel, "is_symlink": is_link})
+                        logger.info("Cleaned up unregistered file: %s (symlink=%s)", rel, is_link)
+                    except OSError as e:
+                        logger.warning("Failed to remove unregistered file %s: %s", target_path, e)
+
+        empty_dirs_removed = self._prune_empty_dirs(self.vfs_dir)
+
+        # Run sync to guarantee mode conversion (e.g. symlinks -> hardlinks)
+        created, updated, deleted = self.sync(records)
+
+        return {
+            "removed_files": removed_files,
+            "removed_count": len(removed_files),
+            "empty_dirs_removed": empty_dirs_removed,
+            "sync_created": created,
+            "sync_updated": updated,
+            "sync_deleted": deleted,
+        }
+
+    def _prune_empty_dirs(self, root_dir: str) -> int:
+        """Recursively remove empty directories. Returns count of removed directories."""
+        removed = 0
         for root, dirs, files in os.walk(root_dir, topdown=False):
             if root == root_dir:
                 continue
             if not os.listdir(root):
                 try:
                     os.rmdir(root)
+                    removed += 1
                     logger.debug("Removed empty directory: %s", root)
                 except OSError:
                     pass
+        return removed

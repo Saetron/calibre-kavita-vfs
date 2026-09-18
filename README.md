@@ -45,6 +45,7 @@ http://<server-ip>:8080
 - **Collision Monitor**: Highlights any conflicting filename mappings and shows how they were automatically disambiguated.
 - **Searchable Book Explorer**: Filterable and searchable table of every mapped book showing its Calibre ID, title, series, volume, chapter, VFS path, and source file.
 - **Manual Sync Button**: Trigger an immediate VFS synchronization without waiting for the check interval.
+- **Cleanup VFS Button**: Scans the VFS directory, removes any unregistered files or broken links, prunes empty folders, and ensures all links are converted when switching between `symlink` and `hardlink` modes.
 
 ---
 

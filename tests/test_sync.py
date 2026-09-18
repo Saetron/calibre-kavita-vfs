@@ -145,6 +145,53 @@ class TestSync(unittest.TestCase):
         self.assertTrue(link_dest.startswith("/mnt/user/data/calibre/"))
         self.assertTrue(link_dest.endswith("book1.cbz"))
 
+    def test_cleanup_unregistered_and_mode_switching(self):
+        # 1. Sync in symlink mode
+        vfs_sym = SymlinkVFS(
+            vfs_dir=self.temp_vfs.name,
+            link_type="symlink",
+            default_language="eng",
+            default_type="Manga",
+        )
+        record = BookFileRecord(
+            book_id=1,
+            title="Naruto 1",
+            series="Naruto",
+            language="eng",
+            type_="Manga",
+            volume=1,
+            chapter=1,
+            format="CBZ",
+            source_path=self.source1,
+        )
+        vfs_sym.sync([record])
+        target = os.path.join(self.temp_vfs.name, "eng/Manga/Naruto/Naruto Vol. 1 Ch. 1 {1}.cbz")
+        self.assertTrue(os.path.islink(target))
+
+        # 2. Add an unregistered file and empty folder
+        stale_dir = os.path.join(self.temp_vfs.name, "old_folder")
+        os.makedirs(stale_dir, exist_ok=True)
+        stale_file = os.path.join(stale_dir, "orphan.cbz")
+        with open(stale_file, "w") as f:
+            f.write("orphan data")
+
+        # 3. Switch to hardlink mode and run cleanup
+        vfs_hard = SymlinkVFS(
+            vfs_dir=self.temp_vfs.name,
+            link_type="hardlink",
+            default_language="eng",
+            default_type="Manga",
+        )
+        res = vfs_hard.cleanup_unregistered([record])
+        self.assertEqual(res["removed_count"], 1)
+        self.assertFalse(os.path.exists(stale_file))
+        self.assertFalse(os.path.exists(stale_dir))
+
+        # Target should now be a real hardlink, NOT a symlink
+        self.assertTrue(os.path.exists(target))
+        self.assertFalse(os.path.islink(target))
+        self.assertEqual(os.stat(target).st_ino, os.stat(self.source1).st_ino)
+
 
 if __name__ == "__main__":
     unittest.main()

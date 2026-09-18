@@ -78,6 +78,22 @@ class TestWebUI(unittest.TestCase):
         self.assertEqual(data["status"], "sync_triggered")
         self.assertTrue(sync_called)
 
+    def test_post_api_cleanup(self):
+        cleanup_called = False
+
+        def on_cleanup():
+            nonlocal cleanup_called
+            cleanup_called = True
+            return {"status": "cleanup_completed", "removed_count": 5, "empty_dirs_removed": 2}
+
+        WebUIHandler.trigger_cleanup_callback = on_cleanup
+        status, headers, body = execute_request("POST", "/api/cleanup")
+        self.assertEqual(status, 200)
+        data = json.loads(body.decode("utf-8"))
+        self.assertEqual(data["status"], "cleanup_completed")
+        self.assertEqual(data["removed_count"], 5)
+        self.assertTrue(cleanup_called)
+
     def test_not_found(self):
         status, headers, body = execute_request("GET", "/unknown_route")
         self.assertEqual(status, 404)

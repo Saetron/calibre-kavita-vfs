@@ -132,6 +132,41 @@ def main() -> int:
             logger.error("Database not found and --once specified. Exiting.")
             return 1
 
+    # Mode: symlink or hardlink
+    link_type = "hardlink" if args.mode == "hardlink" else "symlink"
+    syncer = SymlinkVFS(
+        vfs_dir=args.vfs_dir,
+        link_type=link_type,
+        relative_links=args.relative_links,
+        default_language=args.default_language,
+        default_type=args.default_type,
+        calibre_dir=args.calibre_dir,
+        target_calibre_dir=args.target_calibre_dir,
+    )
+
+    def do_cleanup() -> dict:
+        if not calibre_reader.exists():
+            return {"error": "Calibre DB not found"}
+        logger.info("Manual VFS cleanup triggered via WebUI.")
+        state.set_syncing(True)
+        try:
+            records = calibre_reader.get_all_book_files()
+            res = syncer.cleanup_unregistered(records)
+            desired_map = syncer.build_desired_tree(records)
+            state.update_sync_results(
+                records=records,
+                desired_map=desired_map,
+                collisions=syncer.last_collisions,
+                mode=args.mode,
+                calibre_dir=args.calibre_dir,
+                vfs_dir=args.vfs_dir,
+            )
+            return res
+        except Exception as e:
+            logger.exception("Error during VFS cleanup: %s", e)
+            state.set_syncing(False, error=str(e))
+            return {"error": str(e)}
+
     manual_sync_event = threading.Event()
 
     # Start WebUI if enabled and not running as a one-shot CLI command
@@ -140,6 +175,7 @@ def main() -> int:
             start_webui_server(
                 port=args.webui_port,
                 trigger_sync_callback=lambda: manual_sync_event.set(),
+                trigger_cleanup_callback=do_cleanup,
             )
         except Exception as e:
             logger.warning("Could not start WebUI on port %d: %s", args.webui_port, e)
@@ -158,18 +194,6 @@ def main() -> int:
         except Exception as e:
             logger.exception("FUSE mounting failed: %s", e)
             return 1
-
-    # Mode: symlink or hardlink
-    link_type = "hardlink" if args.mode == "hardlink" else "symlink"
-    syncer = SymlinkVFS(
-        vfs_dir=args.vfs_dir,
-        link_type=link_type,
-        relative_links=args.relative_links,
-        default_language=args.default_language,
-        default_type=args.default_type,
-        calibre_dir=args.calibre_dir,
-        target_calibre_dir=args.target_calibre_dir,
-    )
 
     stop_requested = False
 
